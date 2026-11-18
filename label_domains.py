@@ -10,7 +10,7 @@
 import csv, json, os, re, sys, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-BATCH = 8
+BATCH = int(os.environ.get("LABEL_BATCH", "8"))  # 1 — повтор отклонённых пачек по одному сайту
 WORKERS = 4
 THINKING = os.environ.get("LABEL_THINKING", "1") == "1"
 BASE = os.environ.get("ALIBABA_API_BASE", "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1")
