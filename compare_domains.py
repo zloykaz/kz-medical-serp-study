@@ -37,31 +37,47 @@ def labels(path: str) -> dict[str, dict]:
             rec = json.loads(line)
             if not rec["ok"]:
                 continue
+            by_name = {u.lower(): u for u in rec["units"]}
             for parts in rec["lines"]:
-                try:
-                    n = int(parts[0].strip().lstrip("#"))
-                except ValueError:
+                key = parts[0].strip().lstrip("#")
+                if key.isdigit() and 1 <= int(key) <= len(rec["units"]):
+                    unit = rec["units"][int(key) - 1]
+                elif key.lower() in by_name:  # модель иногда пишет имя сайта вместо номера строки
+                    unit = by_name[key.lower()]
+                else:
                     continue
-                if 1 <= n <= len(rec["units"]):
-                    vals = split_fields(parts[1:])
-                    lab = dict(zip(FIELDS, vals))
-                    out[rec["units"][n - 1]] = {**lab, "cat": cat_code(lab["cat"])}
+                vals, ambiguous = split_fields(parts[1:])
+                lab = dict(zip(FIELDS, vals))
+                out[unit] = {**lab, "cat": cat_code(lab["cat"]), "ambiguous": ambiguous}
     return out
 
 
-def split_fields(parts: list[str]) -> list[str]:
-    """8 полей ответа; лишний «|» в конце отбрасывается, «|» внутри цитаты склеивается обратно в цитату."""
+def settle(lab: dict | None, ev: str) -> dict | None:
+    """Строка с лишним «|»: если «сомнение» дословно есть в свидетельствах, это продолжение цитаты
+    (заголовок сайта вида «Клиника | Официальный сайт»), а не сомнение модели."""
+    if not lab or not lab["ambiguous"] or not lab["doubt"] or norm(lab["doubt"]) not in ev:
+        return lab
+    return {**lab, "quote": f"{lab['quote']} | {lab['doubt']}", "doubt": ""}
+
+
+def split_fields(parts: list[str]) -> tuple[list[str], bool]:
+    """8 полей ответа и признак «лишний | — граница цитаты и сомнения неоднозначна» (её решает settle).
+
+    Лишний «|» в конце отбрасывается; «|» внутри цитаты склеивается обратно в цитату.
+    """
     vals = [p.strip() for p in parts]
+    ambiguous = len(vals) > 8
     while len(vals) > 8 and vals[-1] == "":
         vals.pop()
     if len(vals) > 8:
         vals = vals[:6] + ["|".join(vals[6:-1])] + vals[-1:]
-    return vals + [""] * (8 - len(vals))
+    return vals + [""] * (8 - len(vals)), ambiguous
 
 
 def quote_ok(quote: str, ev: str) -> int:
     """1 — цитата от 3 слов и дословно есть в свидетельствах; пустая или короче — 0 (решает человек)."""
-    return int(len(quote.split()) >= MIN_QUOTE_WORDS and norm(quote) in ev)
+    pieces = [norm(x) for x in quote.split("|") if norm(x)]  # «|» внутри — куски заголовка, каждый ищется отдельно
+    return int(len(quote.split()) >= MIN_QUOTE_WORDS and bool(pieces) and all(x in ev for x in pieces))
 
 
 def norm(s: str) -> str:
@@ -94,8 +110,8 @@ def main() -> None:
     la, lb = labels(path_a), labels(path_b)
     out = []
     for r in rows:
-        a, b = la.get(r["unit"]), lb.get(r["unit"])
         ev = evidence_text(r, ev_dir)
+        a, b = settle(la.get(r["unit"]), ev), settle(lb.get(r["unit"]), ev)
         rec = {"unit": r["unit"], "platform": r["platform"], "att_a": r["att_a"], "att_b": r["att_b"],
                "att_c": r["att_c"], "human_check": r["human_check"]}
         for tag, lab in (("a", a), ("b", b)):
